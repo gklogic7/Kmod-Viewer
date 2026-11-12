@@ -2,8 +2,6 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
@@ -13,6 +11,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
+  AnimationLoopMode,
   AnimationState,
   CameraConfig,
   CameraPreset,
@@ -29,11 +28,11 @@ import {
   createProceduralEnvTexture,
   createRadialShadowTexture,
 } from '../utils/shadowTexture';
-import { resolveGltfResourceUrl } from '../utils/fileIngest';
 import {
   KModGradingShader,
   mapToneMappingConstant,
 } from '../utils/postProcessingShader';
+import { loadUniversal3DModel } from '../utils/modelLoaders';
 
 // Module-scope reusable math helpers (Zero GC in render loop)
 const _box3 = new THREE.Box3();
@@ -56,6 +55,18 @@ const isSoftwareGl = (() => {
   }
 })();
 
+function mapThreeLoopMode(mode: AnimationLoopMode): THREE.AnimationActionLoopStyles {
+  switch (mode) {
+    case 'once':
+      return THREE.LoopOnce;
+    case 'pingpong':
+      return THREE.LoopPingPong;
+    case 'repeat':
+    default:
+      return THREE.LoopRepeat;
+  }
+}
+
 interface ThreeViewportProps {
   gltfAsset: LoadedGltfAsset | null;
   customEnvironmentFile: File | null;
@@ -68,6 +79,7 @@ interface ThreeViewportProps {
   inspectionMode: InspectionMode;
   cameraPresetTrigger: { preset: CameraPreset; timestamp: number } | null;
   animationState: AnimationState;
+  onAnimationTimeUpdate?: (currentTime: number, duration: number) => void;
   onModelLoaded: (metadata: ModelMetadata) => void;
   onPackedGlbReady: (buffer: ArrayBuffer) => void;
   onLoadError: (message: string) => void;
@@ -91,9 +103,11 @@ interface InternalSceneRefs {
   shadowReceiverPlane: THREE.Mesh<THREE.PlaneGeometry, THREE.ShadowMaterial>;
   skyboxBackdropSphere: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   modelRoot: THREE.Group | null;
+  skeletonHelper: THREE.SkeletonHelper | null;
   mixer: THREE.AnimationMixer | null;
   clips: THREE.AnimationClip[];
-  activeAction: THREE.AnimationAction | null;
+  activeActions: THREE.AnimationAction[];
+  activeDuration: number;
   studioEnvTex: THREE.Texture | null;
   neutralEnvTex: THREE.Texture | null;
   warmEnvTex: THREE.Texture | null;
@@ -120,6 +134,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
   inspectionMode,
   cameraPresetTrigger,
   animationState,
+  onAnimationTimeUpdate,
   onModelLoaded,
   onPackedGlbReady,
   onLoadError,
@@ -130,6 +145,9 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
 
   const animStateRef = useRef<AnimationState>(animationState);
   animStateRef.current = animationState;
+
+  const onAnimTimeUpdateRef = useRef(onAnimationTimeUpdate);
+  onAnimTimeUpdateRef.current = onAnimationTimeUpdate;
 
   const envConfigRef = useRef<EnvironmentConfig>(envConfig);
   envConfigRef.current = envConfig;
@@ -335,6 +353,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     let renderBusy = false;
     let renderDirty = false;
     let continuousLoopRunning = false;
+    let lastTimeEmit = 0;
     const clock = new THREE.Clock();
 
     function drawFrame() {
@@ -371,8 +390,16 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
 
       let needsMoreFrames = false;
 
-      if (refs.mixer && refs.activeAction && animStateRef.current.isPlaying) {
+      if (refs.mixer && refs.activeActions.length > 0 && animStateRef.current.isPlaying) {
         refs.mixer.update(dt * animStateRef.current.speed);
+        const primaryAction = refs.activeActions[0];
+        if (primaryAction && onAnimTimeUpdateRef.current) {
+          const now = performance.now();
+          if (now - lastTimeEmit > 80) {
+            lastTimeEmit = now;
+            onAnimTimeUpdateRef.current(primaryAction.time, refs.activeDuration);
+          }
+        }
         needsMoreFrames = true;
       }
 
@@ -452,7 +479,7 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       const refs = sceneRefs.current;
       if (!refs) return;
       const shouldLoop =
-        Boolean(refs.mixer && refs.activeAction && animStateRef.current.isPlaying) ||
+        Boolean(refs.mixer && refs.activeActions.length > 0 && animStateRef.current.isPlaying) ||
         refs.cameraTransitionActive ||
         Boolean(refs.controls.autoRotate && refs.modelRoot);
 
@@ -527,9 +554,11 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
       shadowReceiverPlane,
       skyboxBackdropSphere,
       modelRoot: null,
+      skeletonHelper: null,
       mixer: null,
       clips: [],
-      activeAction: null,
+      activeActions: [],
+      activeDuration: 0,
       studioEnvTex,
       neutralEnvTex: null,
       warmEnvTex: null,
@@ -581,30 +610,23 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     };
   }, []);
 
-  // Load glTF / GLB model whenever gltfAsset changes
+  // Load 3D model (.glb, .gltf, .usdz, .fbx, .obj, .stl, .ply, .dae, .3mf) whenever gltfAsset changes
   useEffect(() => {
     const refs = sceneRefs.current;
     if (!refs || !gltfAsset) return;
 
+    let cancelled = false;
     onLoadingChange(true);
-    const runtimeMissing = new Set<string>(gltfAsset.missingTextures || []);
 
-    const manager = new THREE.LoadingManager();
-    manager.setURLModifier((url) =>
-      resolveGltfResourceUrl(url, gltfAsset.rootFileUrl, gltfAsset.resourceMap, (missing) => {
-        runtimeMissing.add(missing);
-      })
-    );
+    loadUniversal3DModel(gltfAsset)
+      .then((loaded) => {
+        if (cancelled) return;
 
-    const loader = new GLTFLoader(manager);
-    const dracoLoader = new DRACOLoader(manager);
-    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
-    loader.setDRACOLoader(dracoLoader);
-
-    loader.load(
-      gltfAsset.rootFileUrl,
-      (gltf) => {
-        dracoLoader.dispose();
+        if (refs.skeletonHelper) {
+          refs.scene.remove(refs.skeletonHelper);
+          refs.skeletonHelper.dispose();
+          refs.skeletonHelper = null;
+        }
 
         if (refs.modelRoot) {
           refs.scene.remove(refs.modelRoot);
@@ -619,16 +641,11 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         if (refs.mixer) {
           refs.mixer.stopAllAction();
           refs.mixer = null;
-          refs.activeAction = null;
+          refs.activeActions = [];
+          refs.activeDuration = 0;
         }
 
-        const root = gltf.scene || gltf.scenes[0];
-        if (!root) {
-          onLoadingChange(false);
-          onLoadError('The uploaded glTF file does not contain a valid 3D scene.');
-          return;
-        }
-
+        const root = loaded.scene;
         root.updateMatrixWorld(true);
         _box3.setFromObject(root);
         _box3.getSize(_size);
@@ -657,11 +674,15 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         let meshCount = 0;
         let vertexCount = 0;
         let triangleCount = 0;
+        let hasSkeleton = false;
         const materialSet = new Set<THREE.Material>();
         const textureSet = new Set<THREE.Texture>();
         const maxAniso = refs.renderer.capabilities.getMaxAnisotropy();
 
         root.traverse((child) => {
+          if ((child as THREE.Bone).isBone || (child as THREE.SkinnedMesh).isSkinnedMesh) {
+            hasSkeleton = true;
+          }
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
             meshCount++;
@@ -726,9 +747,11 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
                 textureSet.add(stdMat.metalnessMap);
               }
 
-              stdMat.envMapIntensity = envConfigRef.current.useHdriLight
-                ? envConfigRef.current.hdriOpacity
-                : 0;
+              if ('envMapIntensity' in stdMat) {
+                stdMat.envMapIntensity = envConfigRef.current.useHdriLight
+                  ? envConfigRef.current.hdriOpacity
+                  : 0;
+              }
               stdMat.needsUpdate = true;
             });
           }
@@ -739,6 +762,13 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         refs.scene.add(modelContainer);
         refs.modelRoot = modelContainer;
         refs.modelMaxDim = Math.max(_size.x, _size.y, _size.z, 1.0);
+
+        if (hasSkeleton) {
+          const skelHelper = new THREE.SkeletonHelper(root);
+          skelHelper.visible = animStateRef.current.showSkeleton;
+          refs.scene.add(skelHelper);
+          refs.skeletonHelper = skelHelper;
+        }
 
         const footprintX = Math.max(_size.x * 1.65, 0.9);
         const footprintZ = Math.max(_size.z * 1.65, 0.9);
@@ -761,18 +791,25 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         refs.controls.update();
 
         const clipNames: string[] = [];
-        refs.clips = gltf.animations || [];
+        refs.clips = loaded.animations || [];
+        let initialDuration = 0;
+
         if (refs.clips.length > 0) {
           const mixer = new THREE.AnimationMixer(root);
           refs.mixer = mixer;
           refs.clips.forEach((clip, idx) => {
-            const name = clip.name || `Animation_${idx + 1}`;
+            const name = clip.name?.trim() || `Clip_${idx + 1}`;
             clip.name = name;
             clipNames.push(name);
           });
-          const firstAction = mixer.clipAction(refs.clips[0]);
+          const firstClip = refs.clips[0];
+          const firstAction = mixer.clipAction(firstClip);
+          firstAction.loop = mapThreeLoopMode(animStateRef.current.loopMode);
+          firstAction.clampWhenFinished = animStateRef.current.loopMode === 'once';
           firstAction.play();
-          refs.activeAction = firstAction;
+          refs.activeActions = [firstAction];
+          refs.activeDuration = firstClip.duration || 1;
+          initialDuration = refs.activeDuration;
         }
 
         if (!isSoftwareGl) {
@@ -783,15 +820,19 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
         onModelLoaded({
           fileName: gltfAsset.rootFileName,
           fileSize: gltfAsset.fileSize,
+          format: gltfAsset.format,
           meshCount,
           vertexCount,
           triangleCount,
           materialCount: materialSet.size,
           textureCount: textureSet.size,
-          missingTextures: Array.from(runtimeMissing),
+          hasSkeleton,
+          missingTextures: loaded.missingTextures,
           animations: clipNames,
           dimensions: rawDimensions,
         });
+
+        onAnimTimeUpdateRef.current?.(0, initialDuration);
 
         if (gltfAsset.rawGlbBuffer) {
           onPackedGlbReady(gltfAsset.rawGlbBuffer);
@@ -800,28 +841,30 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
           exporter.parse(
             root,
             (res) => {
-              if (res instanceof ArrayBuffer && res.byteLength <= 18 * 1024 * 1024) {
+              if (res instanceof ArrayBuffer && res.byteLength <= 22 * 1024 * 1024) {
                 onPackedGlbReady(res);
               }
             },
             () => {},
-            { binary: true }
+            { binary: true, animations: refs.clips }
           );
         }
 
         refs.ensureLoopState();
-      },
-      undefined,
-      (err) => {
-        dracoLoader.dispose();
+      })
+      .catch((err) => {
+        if (cancelled) return;
         onLoadingChange(false);
         onLoadError(
           err instanceof Error
-            ? `Failed to parse glTF model: ${err.message}`
-            : 'Failed to parse glTF 2.0 model.'
+            ? `Failed to parse ${gltfAsset.format.toUpperCase()} model: ${err.message}`
+            : `Failed to parse ${gltfAsset.format.toUpperCase()} 3D model.`
         );
-      }
-    );
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [gltfAsset]);
 
   // Apply live-dropped or uploaded custom texture files onto the active model
@@ -869,12 +912,12 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
           new GLTFExporter().parse(
             refs.modelRoot.children[0],
             (res) => {
-              if (res instanceof ArrayBuffer && res.byteLength <= 18 * 1024 * 1024) {
+              if (res instanceof ArrayBuffer && res.byteLength <= 22 * 1024 * 1024) {
                 onPackedGlbReady(res);
               }
             },
             () => {},
-            { binary: true }
+            { binary: true, animations: refs.clips }
           );
         }
       },
@@ -1188,24 +1231,91 @@ export const ThreeViewport: React.FC<ThreeViewportProps> = ({
     refs.ensureLoopState();
   }, [cameraPresetTrigger]);
 
-  // Animation Clip & Playback State
+  // Skeleton Bone Helper Toggle
+  useEffect(() => {
+    const refs = sceneRefs.current;
+    if (!refs || !refs.skeletonHelper) return;
+    refs.skeletonHelper.visible = animationState.showSkeleton;
+    refs.requestRender();
+  }, [animationState.showSkeleton]);
+
+  // Animation Clip Selection, Loop Mode & Play/Pause State
   useEffect(() => {
     const refs = sceneRefs.current;
     if (!refs || !refs.mixer || refs.clips.length === 0) return;
 
-    const desiredClip =
-      refs.clips.find((c) => c.name === animationState.activeClip) || refs.clips[0];
-    if (desiredClip) {
-      const nextAction = refs.mixer.clipAction(desiredClip);
-      if (refs.activeAction !== nextAction) {
-        refs.activeAction?.stop();
-        nextAction.reset().play();
-        refs.activeAction = nextAction;
+    const loopConstant = mapThreeLoopMode(animationState.loopMode);
+    const playAll = animationState.activeClip === '__ALL__';
+
+    const targetClips = playAll
+      ? refs.clips
+      : [refs.clips.find((c) => c.name === animationState.activeClip) || refs.clips[0]];
+
+    const nextActions = targetClips.map((c) => refs.mixer!.clipAction(c));
+    const currentSet = new Set(refs.activeActions);
+    const nextSet = new Set(nextActions);
+
+    let changed = currentSet.size !== nextSet.size;
+    if (!changed) {
+      for (const act of nextActions) {
+        if (!currentSet.has(act)) {
+          changed = true;
+          break;
+        }
       }
     }
 
+    if (changed) {
+      refs.mixer.stopAllAction();
+      let maxDur = 0;
+      nextActions.forEach((act) => {
+        act.reset();
+        act.loop = loopConstant;
+        act.clampWhenFinished = animationState.loopMode === 'once';
+        act.play();
+        maxDur = Math.max(maxDur, act.getClip().duration || 0);
+      });
+      refs.activeActions = nextActions;
+      refs.activeDuration = maxDur || 1;
+      onAnimTimeUpdateRef.current?.(0, refs.activeDuration);
+    } else {
+      refs.activeActions.forEach((act) => {
+        act.loop = loopConstant;
+        act.clampWhenFinished = animationState.loopMode === 'once';
+        if (animationState.isPlaying && !act.isRunning()) {
+          act.play();
+        }
+      });
+    }
+
     refs.ensureLoopState();
-  }, [animationState.activeClip, animationState.isPlaying, animationState.speed]);
+  }, [
+    animationState.activeClip,
+    animationState.isPlaying,
+    animationState.speed,
+    animationState.loopMode,
+  ]);
+
+  // Timeline Scrubber Seek
+  useEffect(() => {
+    const refs = sceneRefs.current;
+    if (
+      !refs ||
+      !refs.mixer ||
+      refs.activeActions.length === 0 ||
+      animationState.seekTime === null
+    ) {
+      return;
+    }
+
+    const t = Math.max(0, animationState.seekTime);
+    refs.activeActions.forEach((act) => {
+      const clipDur = act.getClip().duration || 1;
+      act.time = Math.min(t, clipDur);
+    });
+    refs.mixer.update(0);
+    refs.requestRender();
+  }, [animationState.seekTime]);
 
   return (
     <div

@@ -13,8 +13,11 @@ import {
   RefreshCw,
   Grid,
   Sparkles,
+  Film,
+  Bone,
 } from 'lucide-react';
 import {
+  AnimationLoopMode,
   AnimationState,
   CameraConfig,
   CameraPreset,
@@ -54,7 +57,7 @@ interface BottomControlDockProps {
   onUpdateAnimation: (patch: Partial<AnimationState>) => void;
 }
 
-type ActiveTab = 'shadow' | 'hdri' | 'postfx' | 'colors' | 'shading' | 'camera';
+type ActiveTab = 'shadow' | 'hdri' | 'postfx' | 'colors' | 'shading' | 'animation' | 'camera';
 type PostFxSubSection = 'effects' | 'colorbalance';
 
 export const BottomControlDock: React.FC<BottomControlDockProps> = ({
@@ -121,10 +124,13 @@ export const BottomControlDock: React.FC<BottomControlDockProps> = ({
     { id: 'linear', label: 'Linear' },
   ];
 
+  const hasAnimations = Boolean(modelMetadata && modelMetadata.animations.length > 0);
+  const hasSkeleton = Boolean(modelMetadata && modelMetadata.hasSkeleton);
+
   return (
     <section
       aria-label="3D Scene Controls"
-      className="fixed bottom-[34px] left-1/2 -translate-x-1/2 z-20 w-[min(980px,96vw)] flex flex-col items-center pointer-events-none"
+      className="fixed bottom-[34px] left-1/2 -translate-x-1/2 z-20 w-[min(1020px,96vw)] flex flex-col items-center pointer-events-none"
     >
       {/* Collapse / Expand Handle */}
       <button
@@ -214,6 +220,20 @@ export const BottomControlDock: React.FC<BottomControlDockProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => setActiveTab('animation')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'animation'
+                    ? 'bg-[#323232] text-white'
+                    : 'text-[#9e9e9e] hover:text-[#e5e5e5]'
+                }`}
+              >
+                <Film className="w-3.5 h-3.5" />
+                <span>
+                  Animation{hasAnimations ? ` (${modelMetadata!.animations.length})` : ''}
+                </span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab('camera')}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   activeTab === 'camera'
@@ -222,20 +242,22 @@ export const BottomControlDock: React.FC<BottomControlDockProps> = ({
                 }`}
               >
                 <Camera className="w-3.5 h-3.5" />
-                <span>Camera{modelMetadata?.animations.length ? ' & Anim' : ''}</span>
+                <span>Camera</span>
               </button>
             </div>
 
             {/* Right-side active metadata summary (unboxed clean text with · separators) */}
             {modelMetadata && (
               <div className="hidden lg:flex items-center gap-2 text-[11px] text-[#9e9e9e] font-mono-tabular whitespace-nowrap shrink-0">
-                <span className="text-[#d4d4d4] truncate max-w-[150px]">
+                <span className="text-[#3b82f6] uppercase font-semibold">
+                  {modelMetadata.format}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="text-[#d4d4d4] truncate max-w-[130px]">
                   {modelMetadata.fileName}
                 </span>
                 <span aria-hidden="true">·</span>
                 <span>{modelMetadata.meshCount} meshes</span>
-                <span aria-hidden="true">·</span>
-                <span>{modelMetadata.textureCount} tex</span>
                 <span aria-hidden="true">·</span>
                 <span>{modelMetadata.triangleCount.toLocaleString()} tris</span>
               </div>
@@ -936,6 +958,184 @@ export const BottomControlDock: React.FC<BottomControlDockProps> = ({
               </div>
             )}
 
+            {activeTab === 'animation' && (
+              <div className="flex flex-wrap items-center justify-between w-full gap-3">
+                {hasAnimations ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Play / Pause */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateAnimation({ isPlaying: !animationState.isPlaying })
+                        }
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[#3b82f6] hover:bg-[#2563eb] text-white text-xs font-medium cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        {animationState.isPlaying ? (
+                          <>
+                            <Pause className="w-3.5 h-3.5" />
+                            <span>Pause</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-3.5 h-3.5" />
+                            <span>Play</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Reset to 0.00s */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateAnimation({ currentTime: 0, seekTime: 0 })
+                        }
+                        className="px-2 py-1.5 rounded-md bg-[#2a2a2a] hover:bg-[#343434] text-[#d4d4d4] text-xs font-medium cursor-pointer whitespace-nowrap shrink-0"
+                        title="Rewind to start"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Clip Selector (+ Play All Clips Simultaneously) */}
+                      <select
+                        value={animationState.activeClip || modelMetadata!.animations[0]}
+                        onChange={(e) =>
+                          onUpdateAnimation({
+                            activeClip: e.target.value,
+                            currentTime: 0,
+                            seekTime: 0,
+                          })
+                        }
+                        className="bg-[#171717] text-[#e5e5e5] border border-white/15 rounded-md px-2 py-1 text-xs outline-none cursor-pointer max-w-[180px]"
+                        aria-label="Select Animation Clip"
+                      >
+                        {modelMetadata!.animations.length > 1 && (
+                          <option value="__ALL__">All Clips (Simultaneous)</option>
+                        )}
+                        {modelMetadata!.animations.map((clip) => (
+                          <option key={clip} value={clip}>
+                            {clip}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Timeline Scrubber */}
+                      <label className="flex items-center gap-2 text-[#bdbdbd] whitespace-nowrap">
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(0.01, animationState.duration)}
+                          step={0.01}
+                          value={Math.min(animationState.currentTime, animationState.duration || 1)}
+                          onChange={(e) => {
+                            const t = parseFloat(e.target.value);
+                            onUpdateAnimation({ currentTime: t, seekTime: t });
+                          }}
+                          className="studio-slider w-24 sm:w-36"
+                        />
+                        <span className="font-mono-tabular text-[11px] text-[#9e9e9e] w-[78px] text-right">
+                          {animationState.currentTime.toFixed(1)}s /{' '}
+                          {animationState.duration.toFixed(1)}s
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* Speed Slider */}
+                      <label className="flex items-center gap-1.5 text-[#bdbdbd] whitespace-nowrap">
+                        <span>Speed</span>
+                        <input
+                          type="range"
+                          min={0.1}
+                          max={3.0}
+                          step={0.1}
+                          value={animationState.speed}
+                          onChange={(e) =>
+                            onUpdateAnimation({ speed: parseFloat(e.target.value) })
+                          }
+                          className="studio-slider w-16"
+                        />
+                        <span className="font-mono-tabular text-[11px] text-[#9e9e9e] w-8 text-right">
+                          {animationState.speed.toFixed(1)}x
+                        </span>
+                      </label>
+
+                      {/* Loop Mode Selector */}
+                      <label className="flex items-center gap-1.5 text-[#bdbdbd] whitespace-nowrap">
+                        <span>Loop</span>
+                        <select
+                          value={animationState.loopMode}
+                          onChange={(e) =>
+                            onUpdateAnimation({
+                              loopMode: e.target.value as AnimationLoopMode,
+                            })
+                          }
+                          className="bg-[#171717] text-[#e5e5e5] border border-white/15 rounded-md px-2 py-1 text-[11px] outline-none cursor-pointer"
+                        >
+                          <option value="repeat">Repeat</option>
+                          <option value="once">Play Once</option>
+                          <option value="pingpong">Ping-Pong</option>
+                        </select>
+                      </label>
+
+                      {/* Skeleton Bone Helper Toggle */}
+                      {hasSkeleton && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateAnimation({
+                              showSkeleton: !animationState.showSkeleton,
+                            })
+                          }
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                            animationState.showSkeleton
+                              ? 'bg-[#3b82f6] text-white'
+                              : 'bg-[#2a2a2a] text-[#b5b5b5] hover:text-white'
+                          }`}
+                        >
+                          <Bone className="w-3.5 h-3.5" />
+                          <span>
+                            {animationState.showSkeleton ? 'Skeleton: On' : 'Skeleton: Off'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between w-full gap-3">
+                    <span className="text-xs text-[#9e9e9e]">
+                      No keyframe animation clips found in this {modelMetadata?.format.toUpperCase()}{' '}
+                      model. Upload an animated <code className="text-white">.glb</code>,{' '}
+                      <code className="text-white">.gltf</code>,{' '}
+                      <code className="text-white">.fbx</code>, or{' '}
+                      <code className="text-white">.dae</code> file, or load the animated sample in
+                      Guide.
+                    </span>
+                    {hasSkeleton && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateAnimation({
+                            showSkeleton: !animationState.showSkeleton,
+                          })
+                        }
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                          animationState.showSkeleton
+                            ? 'bg-[#3b82f6] text-white'
+                            : 'bg-[#2a2a2a] text-[#b5b5b5] hover:text-white'
+                        }`}
+                      >
+                        <Bone className="w-3.5 h-3.5" />
+                        <span>
+                          {animationState.showSkeleton ? 'Skeleton: On' : 'Skeleton: Off'}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === 'camera' && (
               <div className="flex flex-wrap items-center justify-between w-full gap-3">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -1002,42 +1202,25 @@ export const BottomControlDock: React.FC<BottomControlDockProps> = ({
                   </button>
                 </div>
 
-                {/* Animation clip controls if present */}
-                {modelMetadata && modelMetadata.animations.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdateAnimation({ isPlaying: !animationState.isPlaying })
-                      }
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[#3b82f6] text-white text-xs font-medium cursor-pointer whitespace-nowrap shrink-0"
-                    >
-                      {animationState.isPlaying ? (
-                        <>
-                          <Pause className="w-3.5 h-3.5" />
-                          <span>Pause</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-3.5 h-3.5" />
-                          <span>Play</span>
-                        </>
-                      )}
-                    </button>
-
-                    <select
-                      value={animationState.activeClip || modelMetadata.animations[0]}
-                      onChange={(e) => onUpdateAnimation({ activeClip: e.target.value })}
-                      className="bg-[#171717] text-[#e5e5e5] border border-white/10 rounded-md px-2 py-1 text-xs outline-none"
-                      aria-label="Select Animation Clip"
-                    >
-                      {modelMetadata.animations.map((clip) => (
-                        <option key={clip} value={clip}>
-                          {clip}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                {hasSkeleton && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateAnimation({
+                        showSkeleton: !animationState.showSkeleton,
+                      })
+                    }
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      animationState.showSkeleton
+                        ? 'bg-[#3b82f6] text-white'
+                        : 'bg-[#2a2a2a] text-[#b5b5b5] hover:text-white'
+                    }`}
+                  >
+                    <Bone className="w-3.5 h-3.5" />
+                    <span>
+                      {animationState.showSkeleton ? 'Skeleton: On' : 'Skeleton: Off'}
+                    </span>
+                  </button>
                 )}
               </div>
             )}

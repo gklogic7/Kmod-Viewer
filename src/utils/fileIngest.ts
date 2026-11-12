@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-import { LoadedGltfAsset } from '../types/viewer';
+import { LoadedGltfAsset, SupportedModelFormat } from '../types/viewer';
 
 export interface IngestResult {
   gltfAsset?: LoadedGltfAsset;
@@ -166,7 +166,7 @@ function getFallbackBinBlobUrl(): string {
 }
 
 /**
- * Resolves any URL requested by THREE.GLTFLoader against the uploaded local file map.
+ * Resolves any URL requested by 3D model loaders against the uploaded local file map.
  */
 export function resolveGltfResourceUrl(
   url: string,
@@ -232,26 +232,50 @@ export function resolveGltfResourceUrl(
     return getFallbackBinBlobUrl();
   }
 
-  return getFallbackBaseColorBlobUrl();
+  return url;
 }
 
 /**
- * Classifies uploaded files into a primary glTF/GLB asset (with companion .bin / textures),
- * a custom .hdr / .exr environment map, or standalone texture images (.png, .jpg, .webp).
+ * Detects 3D model format from file extension.
+ */
+export function detectModelFormat(fileName: string): SupportedModelFormat | null {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.glb')) return 'glb';
+  if (lower.endsWith('.gltf')) return 'gltf';
+  if (lower.endsWith('.usdz') || lower.endsWith('.usda')) return 'usdz';
+  if (lower.endsWith('.fbx')) return 'fbx';
+  if (lower.endsWith('.obj')) return 'obj';
+  if (lower.endsWith('.stl')) return 'stl';
+  if (lower.endsWith('.ply')) return 'ply';
+  if (lower.endsWith('.dae')) return 'dae';
+  if (lower.endsWith('.3mf')) return '3mf';
+  return null;
+}
+
+/**
+ * Classifies uploaded files into a primary 3D model asset (.glb, .gltf, .usdz, .fbx, .obj, .stl, .ply, .dae, .3mf),
+ * companion .mtl / .bin / texture files, a custom .hdr / .exr environment map, or standalone texture images.
  */
 export async function processUploadedFileMap(fileMap: Map<string, File>): Promise<IngestResult> {
-  let rootGltfPath: string | null = null;
-  let rootGltfFile: File | null = null;
+  let rootModelPath: string | null = null;
+  let rootModelFile: File | null = null;
+  let rootFormat: SupportedModelFormat | null = null;
+  let mtlPath: string | null = null;
   let environmentFile: File | null = null;
   const standaloneTextures: File[] = [];
 
   for (const [path, file] of fileMap.entries()) {
     const lower = path.toLowerCase();
-    if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-      if (!rootGltfFile || lower.endsWith('.glb')) {
-        rootGltfPath = path;
-        rootGltfFile = file;
+    const detected = detectModelFormat(lower);
+    if (detected) {
+      // Prefer .glb over .gltf if both exist in a folder
+      if (!rootModelFile || detected === 'glb') {
+        rootModelPath = path;
+        rootModelFile = file;
+        rootFormat = detected;
       }
+    } else if (lower.endsWith('.mtl')) {
+      mtlPath = path;
     } else if (lower.endsWith('.hdr') || lower.endsWith('.exr')) {
       environmentFile = file;
     } else if (/\.(png|jpe?g|webp)$/i.test(lower)) {
@@ -259,18 +283,18 @@ export async function processUploadedFileMap(fileMap: Map<string, File>): Promis
     }
   }
 
-  if (!rootGltfFile && !environmentFile && standaloneTextures.length === 0) {
+  if (!rootModelFile && !environmentFile && standaloneTextures.length === 0) {
     return {
       error:
-        'No valid .gltf, .glb, .hdr, .exr, or texture image (.png, .jpg, .webp) found.',
+        'No valid 3D model (.glb, .gltf, .usdz, .fbx, .obj, .stl, .ply, .dae, .3mf), HDRI (.hdr, .exr), or texture image (.png, .jpg, .webp) found.',
     };
   }
 
   let gltfAsset: LoadedGltfAsset | undefined;
 
-  if (rootGltfFile && rootGltfPath) {
+  if (rootModelFile && rootModelPath && rootFormat) {
     const resourceMap = new Map<string, string>();
-    const normalizedRootPath = rootGltfPath.replace(/\\/g, '/').replace(/^\/+/, '');
+    const normalizedRootPath = rootModelPath.replace(/\\/g, '/').replace(/^\/+/, '');
     const rootDir = normalizedRootPath.includes('/')
       ? normalizedRootPath.substring(0, normalizedRootPath.lastIndexOf('/') + 1)
       : '';
@@ -293,12 +317,18 @@ export async function processUploadedFileMap(fileMap: Map<string, File>): Promis
 
     const missingTexturesSet = new Set<string>();
     let rootFileUrl =
-      resourceMap.get(normalizedRootPath) || URL.createObjectURL(rootGltfFile);
+      resourceMap.get(normalizedRootPath) || URL.createObjectURL(rootModelFile);
+
+    let mtlFileUrl: string | null = null;
+    if (mtlPath) {
+      const normMtl = mtlPath.replace(/\\/g, '/').replace(/^\/+/, '');
+      mtlFileUrl = resourceMap.get(normMtl) || null;
+    }
 
     // Pre-parse .gltf JSON so relative image & buffer URIs are rewritten directly to valid Blob URLs
-    if (rootGltfFile.name.toLowerCase().endsWith('.gltf')) {
+    if (rootFormat === 'gltf') {
       try {
-        const rawText = await rootGltfFile.text();
+        const rawText = await rootModelFile.text();
         const json = JSON.parse(rawText);
 
         if (Array.isArray(json.buffers)) {
@@ -330,17 +360,16 @@ export async function processUploadedFileMap(fileMap: Map<string, File>): Promis
     }
 
     let rawGlbBuffer: ArrayBuffer | null = null;
-    if (
-      rootGltfFile.name.toLowerCase().endsWith('.glb') &&
-      rootGltfFile.size <= 15 * 1024 * 1024
-    ) {
-      rawGlbBuffer = await rootGltfFile.arrayBuffer();
+    if (rootFormat === 'glb' && rootModelFile.size <= 18 * 1024 * 1024) {
+      rawGlbBuffer = await rootModelFile.arrayBuffer();
     }
 
     gltfAsset = {
+      format: rootFormat,
       rootFileUrl,
-      rootFileName: rootGltfFile.name,
-      fileSize: rootGltfFile.size,
+      rootFileName: rootModelFile.name,
+      fileSize: rootModelFile.size,
+      mtlFileUrl,
       rawGlbBuffer,
       resourceMap,
       missingTextures: Array.from(missingTexturesSet),
@@ -350,7 +379,7 @@ export async function processUploadedFileMap(fileMap: Map<string, File>): Promis
   return {
     gltfAsset,
     environmentFile: environmentFile || undefined,
-    textureFiles: !rootGltfFile && standaloneTextures.length > 0 ? standaloneTextures : undefined,
+    textureFiles: !rootModelFile && standaloneTextures.length > 0 ? standaloneTextures : undefined,
   };
 }
 
@@ -368,7 +397,6 @@ function createSampleModelTexture(): THREE.CanvasTexture {
   ctx.fillStyle = '#1e293b';
   ctx.fillRect(0, 0, size, size);
 
-  // Subtle concentric rings and radial tick marks
   const cx = size / 2;
   const cy = size / 2;
   ctx.strokeStyle = '#38bdf8';
@@ -397,7 +425,8 @@ function createSampleModelTexture(): THREE.CanvasTexture {
 
 /**
  * Builds a 9-part composite procedural 3D studio chronometer / gyroscope assembly
- * with embedded procedural textures and exports it to a real binary .glb file.
+ * with embedded procedural textures AND 3 multi-track keyframe AnimationClips,
+ * exporting it to a real animated binary .glb file.
  */
 export async function generateSampleGlbBuffer(): Promise<ArrayBuffer> {
   const group = new THREE.Group();
@@ -542,6 +571,51 @@ export async function generateSampleGlbBuffer(): Promise<ArrayBuffer> {
   conduitMesh.name = 'Helical_Conduit_Ring';
   group.add(conduitMesh);
 
+  // Build 3 multi-track keyframe AnimationClips for testing animated GLB playback
+  const times = [0, 1, 2, 3, 4];
+  const makeYRotQuats = (dir = 1) => {
+    const vals: number[] = [];
+    for (let i = 0; i < times.length; i++) {
+      const q = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(0.2 * dir, (i / 4) * Math.PI * 2 * dir, 0)
+      );
+      vals.push(q.x, q.y, q.z, q.w);
+    }
+    return vals;
+  };
+
+  const makePrecessionQuats = () => {
+    const vals: number[] = [];
+    for (let i = 0; i < times.length; i++) {
+      const angle = (i / 4) * Math.PI * 2;
+      const q = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(Math.sin(angle) * 0.65, -angle, Math.cos(angle) * 0.45)
+      );
+      vals.push(q.x, q.y, q.z, q.w);
+    }
+    return vals;
+  };
+
+  const clipGimbalOrbit = new THREE.AnimationClip('Gimbal_Synchronized_Orbit', 4, [
+    new THREE.QuaternionKeyframeTrack('Outer_Gold_Gimbal.quaternion', times, makeYRotQuats(1)),
+    new THREE.QuaternionKeyframeTrack('Inner_Copper_Gimbal.quaternion', times, makePrecessionQuats()),
+    new THREE.QuaternionKeyframeTrack('Textured_Rotor_Core.quaternion', times, makeYRotQuats(-1)),
+  ]);
+
+  const clipRotorPulse = new THREE.AnimationClip('Chronometer_Harmonic_Hover', 4, [
+    new THREE.VectorKeyframeTrack(
+      'Textured_Rotor_Core.position',
+      [0, 1, 2, 3, 4],
+      [0, 1.28, 0, 0, 1.38, 0, 0, 1.28, 0, 0, 1.18, 0, 0, 1.28, 0]
+    ),
+    new THREE.VectorKeyframeTrack(
+      'Equatorial_Flywheel.position',
+      [0, 1, 2, 3, 4],
+      [0, 1.28, 0, 0, 1.38, 0, 0, 1.28, 0, 0, 1.18, 0, 0, 1.28, 0]
+    ),
+    new THREE.QuaternionKeyframeTrack('Equatorial_Flywheel.quaternion', times, makeYRotQuats(1)),
+  ]);
+
   const exporter = new GLTFExporter();
   const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
     exporter.parse(
@@ -554,7 +628,7 @@ export async function generateSampleGlbBuffer(): Promise<ArrayBuffer> {
         }
       },
       (err) => reject(err),
-      { binary: true }
+      { binary: true, animations: [clipGimbalOrbit, clipRotorPulse] }
     );
   });
 

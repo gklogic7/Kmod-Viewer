@@ -21,7 +21,7 @@ export const DropzoneOverlay: React.FC<DropzoneOverlayProps> = ({
   return (
     <main
       className="fixed inset-x-0 top-[52px] bottom-[30px] z-10 flex flex-col items-center justify-center px-4 bg-[#191919]"
-      aria-label="glTF 2.0 File Dropzone"
+      aria-label="3D Model File Dropzone"
     >
       {/* Centered Dropzone Box matching reference screenshot */}
       <div
@@ -46,13 +46,18 @@ export const DropzoneOverlay: React.FC<DropzoneOverlayProps> = ({
               Parsing 3D scene...
             </span>
             <span className="text-xs text-[#8a8a8a]">
-              Preparing WebGL buffers, ground shadow &amp; PBR environment
+              Preparing WebGL buffers, animations, ground shadow &amp; PBR environment
             </span>
           </div>
         ) : (
-          <span className="text-[18px] sm:text-[23px] font-normal text-[#9e9e9e] tracking-[-0.01em] select-none">
-            Drag glTF 2.0 file or folder here
-          </span>
+          <div className="flex flex-col items-center gap-2.5 select-none">
+            <span className="text-[18px] sm:text-[23px] font-normal text-[#9e9e9e] tracking-[-0.01em]">
+              Drag glTF 2.0 file or folder here
+            </span>
+            <span className="text-[11px] font-mono-tabular text-[#6d6d6d]">
+              Supports animated .glb · .gltf · .usdz · .fbx · .obj · .stl · .ply · .dae · .3mf
+            </span>
+          </div>
         )}
       </div>
 

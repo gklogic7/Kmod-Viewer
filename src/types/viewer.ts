@@ -10,6 +10,19 @@ export type ToneMappingMode = 'aces' | 'agx' | 'neutral' | 'reinhard' | 'cineon'
 
 export type PostProcessingPreset = 'studio' | 'cinematic' | 'crisp' | 'glow' | 'reset';
 
+export type SupportedModelFormat =
+  | 'glb'
+  | 'gltf'
+  | 'usdz'
+  | 'fbx'
+  | 'obj'
+  | 'stl'
+  | 'ply'
+  | 'dae'
+  | '3mf';
+
+export type AnimationLoopMode = 'repeat' | 'once' | 'pingpong';
+
 export interface PostProcessingConfig {
   enabled: boolean;
   toneMapping: ToneMappingMode;
@@ -67,11 +80,13 @@ export interface MaterialColorConfig {
 export interface ModelMetadata {
   fileName: string;
   fileSize: number;
+  format: SupportedModelFormat;
   meshCount: number;
   vertexCount: number;
   triangleCount: number;
   materialCount: number;
   textureCount: number;
+  hasSkeleton: boolean;
   missingTextures: string[];
   animations: string[];
   dimensions: { x: number; y: number; z: number };
@@ -81,12 +96,19 @@ export interface AnimationState {
   activeClip: string | null;
   isPlaying: boolean;
   speed: number;
+  loopMode: AnimationLoopMode;
+  showSkeleton: boolean;
+  currentTime: number;
+  duration: number;
+  seekTime: number | null;
 }
 
 export interface LoadedGltfAsset {
+  format: SupportedModelFormat;
   rootFileUrl: string;
   rootFileName: string;
   fileSize: number;
+  mtlFileUrl?: string | null;
   rawGlbBuffer: ArrayBuffer | null;
   resourceMap: Map<string, string>;
   missingTextures: string[];

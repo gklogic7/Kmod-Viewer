@@ -1,4 +1,5 @@
 import {
+  AnimationState,
   CameraConfig,
   EnvironmentConfig,
   MaterialColorConfig,
@@ -22,6 +23,7 @@ export function downloadStandaloneOfflineHtml(
   cameraConfig: CameraConfig,
   materialColorConfig: MaterialColorConfig,
   postProcessingConfig: PostProcessingConfig,
+  animationState: AnimationState,
   activeModelName?: string | null,
   rawGlbBuffer?: ArrayBuffer | null
 ): void {
@@ -67,8 +69,8 @@ export function downloadStandaloneOfflineHtml(
     .drop-card {
       width: min(475px, 90vw); height: min(215px, 42vh);
       background: #252525; border-radius: 8px;
-      display: flex; align-items: center; justify-content: center;
-      text-align: center; padding: 24px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 24px; gap: 8px;
       border: 1px solid rgba(255,255,255,0.04);
       box-shadow: 0 12px 32px rgba(0,0,0,0.28);
       transition: border-color 0.15s ease, transform 0.15s ease;
@@ -76,6 +78,7 @@ export function downloadStandaloneOfflineHtml(
     }
     .drop-card.dragover { border-color: #3b82f6; transform: scale(1.01); }
     .drop-title { font-size: clamp(18px, 3.5vw, 23px); color: #9e9e9e; font-weight: 400; }
+    .drop-sub { font-size: 11px; color: #6d6d6d; font-family: monospace; }
     .choose-row {
       margin-top: 34px; display: inline-flex; align-items: center; gap: 8px;
       color: #9e9e9e; font-size: 16px; cursor: pointer; background: none; border: none;
@@ -83,7 +86,7 @@ export function downloadStandaloneOfflineHtml(
     .choose-row:hover { color: #e5e5e5; }
     #dock-wrapper {
       position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%);
-      width: min(980px, 96vw); z-index: 18; display: none;
+      width: min(1020px, 96vw); z-index: 18; display: none;
       flex-direction: column; align-items: center; pointer-events: none;
     }
     #dock-wrapper.visible { display: flex; }
@@ -151,7 +154,7 @@ export function downloadStandaloneOfflineHtml(
   <header>
     <div class="brand">KMod viewer</div>
     <div class="top-actions">
-      <button class="btn" id="btn-open-model">Load glTF / GLB</button>
+      <button class="btn" id="btn-open-model">Load 3D Model</button>
       <button class="btn" id="btn-open-tex">Apply Texture</button>
       <button class="btn" id="btn-open-hdr">Load .HDR / .EXR</button>
     </div>
@@ -162,6 +165,7 @@ export function downloadStandaloneOfflineHtml(
   <div id="dropzone-wrap">
     <div class="drop-card" id="drop-card">
       <span class="drop-title">Drag glTF 2.0 file or folder here</span>
+      <span class="drop-sub">Supports animated .glb · .gltf · .usdz · .fbx · .obj · .stl · .ply · .dae · .3mf</span>
     </div>
     <button class="choose-row" id="btn-choose-file">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -179,6 +183,7 @@ export function downloadStandaloneOfflineHtml(
       <div class="dock-tabs">
         <div class="tab-group">
           <button class="tab-btn active" data-tab="tab-scene">Scene, Grid &amp; HDRI</button>
+          <button class="tab-btn" data-tab="tab-anim" id="btn-tab-anim">Animation &amp; Rig</button>
           <button class="tab-btn" data-tab="tab-postfx">Post-FX &amp; Bloom</button>
           <button class="tab-btn" data-tab="tab-colorbalance">Color Balance &amp; Tone Map</button>
         </div>
@@ -228,7 +233,35 @@ export function downloadStandaloneOfflineHtml(
         </div>
       </div>
 
-      <!-- Tab 2: Post-FX Optics & Bloom -->
+      <!-- Tab 2: Animation & Rigging Studio -->
+      <div class="tab-pane" id="tab-anim">
+        <div class="dock-row">
+          <div class="control-group">
+            <button class="btn active" id="btn-anim-play">${animationState.isPlaying ? 'Pause' : 'Play'}</button>
+            <button class="btn" id="btn-anim-rewind">Rewind</button>
+            <span>Clip</span>
+            <select id="sel-anim-clip">
+              <option value="">No animations</option>
+            </select>
+            <span>Timeline</span>
+            <input type="range" id="rng-anim-time" min="0" max="1" step="0.01" value="0" style="width:120px;" />
+            <span id="lbl-anim-time" style="font-family:monospace; width:74px;">0.0s / 0.0s</span>
+          </div>
+          <div class="control-group">
+            <span>Speed</span>
+            <input type="range" id="rng-anim-speed" min="0.1" max="3.0" step="0.1" value="${animationState.speed}" />
+            <span>Loop</span>
+            <select id="sel-anim-loop">
+              <option value="repeat" ${animationState.loopMode === 'repeat' ? 'selected' : ''}>Repeat</option>
+              <option value="once" ${animationState.loopMode === 'once' ? 'selected' : ''}>Play Once</option>
+              <option value="pingpong" ${animationState.loopMode === 'pingpong' ? 'selected' : ''}>Ping-Pong</option>
+            </select>
+            <label><input type="checkbox" id="chk-skeleton" ${animationState.showSkeleton ? 'checked' : ''} /> Skeleton</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Post-FX Optics & Bloom -->
       <div class="tab-pane" id="tab-postfx">
         <div class="dock-row">
           <div class="control-group">
@@ -270,7 +303,7 @@ export function downloadStandaloneOfflineHtml(
         </div>
       </div>
 
-      <!-- Tab 3: Color Balance & Tone Mapping -->
+      <!-- Tab 4: Color Balance & Tone Mapping -->
       <div class="tab-pane" id="tab-colorbalance">
         <div class="dock-row">
           <div class="control-group">
@@ -303,14 +336,14 @@ export function downloadStandaloneOfflineHtml(
     </div>
   </div>
 
-  <input type="file" id="file-input" multiple accept=".gltf,.glb,.bin,.png,.jpg,.jpeg,.webp,.hdr,.exr" style="display:none" />
+  <input type="file" id="file-input" multiple accept=".gltf,.glb,.usdz,.usda,.fbx,.obj,.mtl,.stl,.ply,.dae,.3mf,.bin,.png,.jpg,.jpeg,.webp,.hdr,.exr" style="display:none" />
   <input type="file" id="tex-input" accept=".png,.jpg,.jpeg,.webp" style="display:none" />
   <input type="file" id="hdr-input" accept=".hdr,.exr" style="display:none" />
 
   <footer>
     <span>KMod viewer</span>
     <span>|</span>
-    <span>three.js webgl + post-fx</span>
+    <span>three.js webgl · animations · multi-format · post-fx</span>
     <span>|</span>
     <span>press H to minimize controls</span>
   </footer>
@@ -319,6 +352,14 @@ export function downloadStandaloneOfflineHtml(
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+    import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+    import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+    import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
+    import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
     import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
     import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
     import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -416,6 +457,12 @@ export function downloadStandaloneOfflineHtml(
         case 'linear':
         default: return THREE.LinearToneMapping;
       }
+    }
+
+    function mapLoopStyle(mode) {
+      if (mode === 'once') return THREE.LoopOnce;
+      if (mode === 'pingpong') return THREE.LoopPingPong;
+      return THREE.LoopRepeat;
     }
 
     const container = document.getElementById('viewport');
@@ -590,6 +637,14 @@ export function downloadStandaloneOfflineHtml(
     scene.add(contactPlane);
 
     let activeModel = null;
+    let skeletonHelper = null;
+    let mixer = null;
+    let clips = [];
+    let activeActions = [];
+    let activeDuration = 0;
+    let animPlaying = ${animationState.isPlaying};
+    let animSpeed = ${animationState.speed};
+    const clock = new THREE.Clock();
 
     function applyHdriOpacityAndLight() {
       const useHdri = document.getElementById('chk-hdri-light').checked;
@@ -686,13 +741,46 @@ export function downloadStandaloneOfflineHtml(
       syncPostFxUniforms();
     }
 
-    function fitModel(root) {
+    function activateAnimationClip(clipChoice) {
+      if (!mixer || clips.length === 0) return;
+      mixer.stopAllAction();
+      const loopMode = document.getElementById('sel-anim-loop').value;
+      const loopStyle = mapLoopStyle(loopMode);
+      const targets = clipChoice === '__ALL__'
+        ? clips
+        : [clips.find(c => c.name === clipChoice) || clips[0]];
+      let maxDur = 0;
+      activeActions = targets.map(c => {
+        const act = mixer.clipAction(c);
+        act.reset();
+        act.loop = loopStyle;
+        act.clampWhenFinished = loopMode === 'once';
+        act.play();
+        maxDur = Math.max(maxDur, c.duration || 0);
+        return act;
+      });
+      activeDuration = maxDur || 1;
+      document.getElementById('rng-anim-time').max = String(activeDuration);
+    }
+
+    function fitModel(root, modelAnimations = []) {
       if (activeModel) scene.remove(activeModel);
+      if (skeletonHelper) {
+        scene.remove(skeletonHelper);
+        skeletonHelper.dispose();
+        skeletonHelper = null;
+      }
+      if (mixer) {
+        mixer.stopAllAction();
+        mixer = null;
+        activeActions = [];
+      }
+
       activeModel = root;
       const box = new THREE.Box3().setFromObject(root);
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z, 0.001);
-      root.scale.setScalar(2.0 / maxDim);
+      root.scale.multiplyScalar(2.0 / maxDim);
 
       const scaledBox = new THREE.Box3().setFromObject(root);
       const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
@@ -700,10 +788,16 @@ export function downloadStandaloneOfflineHtml(
       root.position.z -= scaledCenter.z;
       root.position.y -= scaledBox.min.y;
 
+      let hasBones = false;
       root.traverse((obj) => {
+        if (obj.isBone || obj.isSkinnedMesh) hasBones = true;
+        if (obj.isSkinnedMesh) obj.frustumCulled = false;
         if (obj.isMesh) {
           obj.castShadow = true;
           obj.receiveShadow = true;
+          if (obj.geometry && !obj.geometry.attributes.normal) {
+            obj.geometry.computeVertexNormals();
+          }
           const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
           mats.forEach(m => {
             if (m && m.map) {
@@ -717,6 +811,12 @@ export function downloadStandaloneOfflineHtml(
         }
       });
 
+      if (hasBones) {
+        skeletonHelper = new THREE.SkeletonHelper(root);
+        skeletonHelper.visible = document.getElementById('chk-skeleton').checked;
+        scene.add(skeletonHelper);
+      }
+
       const finalBox = new THREE.Box3().setFromObject(root);
       const finalSize = finalBox.getSize(new THREE.Vector3());
       const footprint = Math.max(finalSize.x, finalSize.z, 0.8) * 1.65;
@@ -729,6 +829,40 @@ export function downloadStandaloneOfflineHtml(
       controls.update();
 
       scene.add(root);
+
+      clips = modelAnimations || [];
+      const selClip = document.getElementById('sel-anim-clip');
+      selClip.innerHTML = '';
+      if (clips.length > 0) {
+        mixer = new THREE.AnimationMixer(root);
+        clips.forEach((c, idx) => {
+          c.name = c.name || ('Clip_' + (idx + 1));
+        });
+        if (clips.length > 1) {
+          const optAll = document.createElement('option');
+          optAll.value = '__ALL__';
+          optAll.textContent = 'All Clips (Simultaneous)';
+          selClip.appendChild(optAll);
+        }
+        clips.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.name;
+          opt.textContent = c.name;
+          selClip.appendChild(opt);
+        });
+        const initialChoice = '${animationState.activeClip || ''}' || clips[0].name;
+        selClip.value = initialChoice;
+        if (!selClip.value) selClip.value = clips[0].name;
+        activateAnimationClip(selClip.value);
+        document.getElementById('btn-tab-anim').textContent = 'Animation (' + clips.length + ')';
+      } else {
+        const optNone = document.createElement('option');
+        optNone.value = '';
+        optNone.textContent = 'No animations';
+        selClip.appendChild(optNone);
+        document.getElementById('btn-tab-anim').textContent = 'Animation & Rig';
+      }
+
       applyHdriOpacityAndLight();
       applyModelColorOverride();
       dropzoneWrap.classList.add('hidden');
@@ -751,6 +885,14 @@ export function downloadStandaloneOfflineHtml(
 
     function animate() {
       requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.1);
+      if (mixer && activeActions.length > 0 && animPlaying) {
+        mixer.update(dt * animSpeed);
+        const cur = activeActions[0].time || 0;
+        document.getElementById('rng-anim-time').value = String(cur);
+        document.getElementById('lbl-anim-time').textContent =
+          cur.toFixed(1) + 's / ' + activeDuration.toFixed(1) + 's';
+      }
       controls.update();
       if (postFxEnabled) {
         composer.render();
@@ -765,7 +907,7 @@ export function downloadStandaloneOfflineHtml(
       const binStr = atob(embeddedBase64);
       const bytes = new Uint8Array(binStr.length);
       for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-      new GLTFLoader().parse(bytes.buffer, '', (gltf) => fitModel(gltf.scene));
+      new GLTFLoader().parse(bytes.buffer, '', (gltf) => fitModel(gltf.scene, gltf.animations || []));
     }
 
     function createFallbackTexBlobUrl() {
@@ -815,30 +957,68 @@ export function downloadStandaloneOfflineHtml(
           URL.revokeObjectURL(url);
         });
       }
-      const gltfFile = list.find(f => /\\.(glb|gltf)$/i.test(f.name));
-      if (gltfFile) {
+
+      const modelFile = list.find(f => /\\.(glb|gltf|usdz|usda|fbx|obj|stl|ply|dae|3mf)$/i.test(f.name));
+      if (modelFile) {
         const resMap = new Map();
         list.forEach(f => {
           const u = URL.createObjectURL(f);
           resMap.set(f.name.toLowerCase(), u);
           if (f.webkitRelativePath) resMap.set(f.webkitRelativePath.toLowerCase(), u);
         });
-        let rootUrl = resMap.get(gltfFile.name.toLowerCase());
-        if (gltfFile.name.toLowerCase().endsWith('.gltf')) {
-          try {
-            const txt = await gltfFile.text();
-            const json = JSON.parse(txt);
-            const resolveUri = (uri) => {
-              const clean = decodeURIComponent(uri).replace(/^(\\.\\/|\\/)+/, '').toLowerCase();
-              const base = clean.split('/').pop() || clean;
-              return resMap.get(clean) || resMap.get(base) || fallbackTexBlobUrl;
-            };
-            if (Array.isArray(json.buffers)) json.buffers.forEach(b => { if (b.uri && !b.uri.startsWith('data:')) b.uri = resolveUri(b.uri); });
-            if (Array.isArray(json.images)) json.images.forEach(img => { if (img.uri && !img.uri.startsWith('data:')) img.uri = resolveUri(img.uri); });
-            rootUrl = URL.createObjectURL(new Blob([JSON.stringify(json)], { type: 'model/gltf+json' }));
-          } catch (e) {}
+        const lower = modelFile.name.toLowerCase();
+        let rootUrl = resMap.get(lower);
+
+        if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+          if (lower.endsWith('.gltf')) {
+            try {
+              const txt = await modelFile.text();
+              const json = JSON.parse(txt);
+              const resolveUri = (uri) => {
+                const clean = decodeURIComponent(uri).replace(/^(\\.\\/|\\/)+/, '').toLowerCase();
+                const base = clean.split('/').pop() || clean;
+                return resMap.get(clean) || resMap.get(base) || fallbackTexBlobUrl;
+              };
+              if (Array.isArray(json.buffers)) json.buffers.forEach(b => { if (b.uri && !b.uri.startsWith('data:')) b.uri = resolveUri(b.uri); });
+              if (Array.isArray(json.images)) json.images.forEach(img => { if (img.uri && !img.uri.startsWith('data:')) img.uri = resolveUri(img.uri); });
+              rootUrl = URL.createObjectURL(new Blob([JSON.stringify(json)], { type: 'model/gltf+json' }));
+            } catch (e) {}
+          }
+          new GLTFLoader().load(rootUrl, (gltf) => fitModel(gltf.scene, gltf.animations || []));
+        } else if (lower.endsWith('.usdz') || lower.endsWith('.usda')) {
+          new USDZLoader().load(rootUrl, (grp) => fitModel(grp, grp.animations || []));
+        } else if (lower.endsWith('.fbx')) {
+          new FBXLoader().load(rootUrl, (grp) => fitModel(grp, grp.animations || []));
+        } else if (lower.endsWith('.obj')) {
+          const mtlFile = list.find(f => /\\.mtl$/i.test(f.name));
+          const objLoader = new OBJLoader();
+          if (mtlFile) {
+            const mtlUrl = resMap.get(mtlFile.name.toLowerCase());
+            const mtl = await new MTLLoader().loadAsync(mtlUrl);
+            mtl.preload();
+            objLoader.setMaterials(mtl);
+          }
+          objLoader.load(rootUrl, (grp) => fitModel(grp, []));
+        } else if (lower.endsWith('.stl')) {
+          new STLLoader().load(rootUrl, (geo) => {
+            geo.computeVertexNormals();
+            const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xd4d8e0, roughness: 0.35, metalness: 0.2 }));
+            const grp = new THREE.Group(); grp.add(mesh);
+            fitModel(grp, []);
+          });
+        } else if (lower.endsWith('.ply')) {
+          new PLYLoader().load(rootUrl, (geo) => {
+            geo.computeVertexNormals();
+            const hasCol = Boolean(geo.attributes.color);
+            const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: hasCol ? 0xffffff : 0xd4d8e0, roughness: 0.35, metalness: 0.15, vertexColors: hasCol }));
+            const grp = new THREE.Group(); grp.add(mesh);
+            fitModel(grp, []);
+          });
+        } else if (lower.endsWith('.dae')) {
+          new ColladaLoader().load(rootUrl, (dae) => fitModel(dae.scene, dae.scene.animations || []));
+        } else if (lower.endsWith('.3mf')) {
+          new ThreeMFLoader().load(rootUrl, (grp) => fitModel(grp, []));
         }
-        new GLTFLoader().load(rootUrl, (gltf) => fitModel(gltf.scene));
       } else {
         const texFile = list.find(f => /\\.(png|jpe?g|webp)$/i.test(f.name));
         if (texFile) applyDroppedTexture(texFile);
@@ -886,6 +1066,42 @@ export function downloadStandaloneOfflineHtml(
       if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
     });
 
+    // Animation UI listeners
+    document.getElementById('btn-anim-play').onclick = (e) => {
+      animPlaying = !animPlaying;
+      e.target.textContent = animPlaying ? 'Pause' : 'Play';
+      e.target.classList.toggle('active', animPlaying);
+    };
+    document.getElementById('btn-anim-rewind').onclick = () => {
+      if (!mixer) return;
+      activeActions.forEach(a => { a.time = 0; });
+      mixer.update(0);
+      document.getElementById('rng-anim-time').value = '0';
+      document.getElementById('lbl-anim-time').textContent = '0.0s / ' + activeDuration.toFixed(1) + 's';
+    };
+    document.getElementById('sel-anim-clip').onchange = (e) => {
+      activateAnimationClip(e.target.value);
+    };
+    document.getElementById('rng-anim-time').oninput = (e) => {
+      if (!mixer) return;
+      const t = parseFloat(e.target.value);
+      activeActions.forEach(a => {
+        const dur = a.getClip().duration || 1;
+        a.time = Math.min(t, dur);
+      });
+      mixer.update(0);
+      document.getElementById('lbl-anim-time').textContent = t.toFixed(1) + 's / ' + activeDuration.toFixed(1) + 's';
+    };
+    document.getElementById('rng-anim-speed').oninput = (e) => {
+      animSpeed = parseFloat(e.target.value);
+    };
+    document.getElementById('sel-anim-loop').onchange = () => {
+      activateAnimationClip(document.getElementById('sel-anim-clip').value);
+    };
+    document.getElementById('chk-skeleton').onchange = (e) => {
+      if (skeletonHelper) skeletonHelper.visible = e.target.checked;
+    };
+
     function refreshGrid() {
       const mode = document.getElementById('sel-grid-mode').value;
       const fc = document.getElementById('col-floor').value;
@@ -932,7 +1148,7 @@ export function downloadStandaloneOfflineHtml(
       });
     };
     document.getElementById('btn-reset-cam').onclick = () => {
-      if (activeModel) fitModel(activeModel);
+      if (activeModel) fitModel(activeModel, clips);
     };
 
     // Post-FX listeners
@@ -957,7 +1173,7 @@ export function downloadStandaloneOfflineHtml(
   const a = document.createElement('a');
   a.href = url;
   a.download = safeModelName
-    ? `kmod-viewer-${safeModelName.replace(/\.(glb|gltf)$/i, '')}.html`
+    ? `kmod-viewer-${safeModelName.replace(/\.(glb|gltf|usdz|usda|fbx|obj|stl|ply|dae|3mf)$/i, '')}.html`
     : 'kmod-viewer-offline.html';
   document.body.appendChild(a);
   a.click();

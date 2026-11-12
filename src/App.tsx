@@ -92,17 +92,22 @@ export default function App() {
     timestamp: number;
   } | null>(null);
 
-  // Animation playback state
+  // Animation & Rigging Studio state
   const [animationState, setAnimationState] = useState<AnimationState>({
     activeClip: null,
     isPlaying: true,
     speed: 1.0,
+    loopMode: 'repeat',
+    showSkeleton: false,
+    currentTime: 0,
+    duration: 0,
+    seekTime: null,
   });
 
   // Collapsible bottom studio dock
   const [dockCollapsed, setDockCollapsed] = useState(false);
 
-  // Hidden file inputs for glTF/GLB, multi-file glTF folders, custom textures, and custom HDR/EXR uploads
+  // Hidden file inputs for 3D models, folders, custom textures, and custom HDR/EXR uploads
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const textureInputRef = useRef<HTMLInputElement | null>(null);
@@ -292,6 +297,7 @@ export default function App() {
       cameraConfig,
       materialColorConfig,
       postProcessingConfig,
+      animationState,
       modelMetadata?.fileName || null,
       packedGlbBuffer || gltfAsset?.rawGlbBuffer || null
     );
@@ -326,7 +332,7 @@ export default function App() {
             onClick={handleChooseFileClick}
             className="hover:text-white hover:underline underline-offset-4 transition-colors cursor-pointer whitespace-nowrap shrink-0"
           >
-            Open glTF
+            Open 3D Model
           </button>
           <button
             type="button"
@@ -378,12 +384,22 @@ export default function App() {
         inspectionMode={inspectionMode}
         cameraPresetTrigger={cameraPresetTrigger}
         animationState={animationState}
+        onAnimationTimeUpdate={(currentTime, duration) => {
+          setAnimationState((prev) => ({
+            ...prev,
+            currentTime,
+            duration,
+            seekTime: null,
+          }));
+        }}
         onModelLoaded={(meta) => {
           setModelMetadata(meta);
           setAnimationState((prev) => ({
             ...prev,
             activeClip: meta.animations[0] || null,
             isPlaying: meta.animations.length > 0,
+            currentTime: 0,
+            seekTime: null,
           }));
         }}
         onPackedGlbReady={setPackedGlbBuffer}
@@ -395,7 +411,7 @@ export default function App() {
         onLoadingChange={setIsLoading}
       />
 
-      {/* Strict Empty Dropzone Landing (Shown until a local glTF/GLB is uploaded) */}
+      {/* Strict Empty Dropzone Landing (Shown until a local 3D model is uploaded) */}
       {!hasModel && (
         <DropzoneOverlay
           isDragging={isDragging}
@@ -411,8 +427,8 @@ export default function App() {
       {hasModel && isDragging && (
         <div className="fixed inset-0 top-[52px] bottom-[30px] z-25 pointer-events-none border-2 border-[#3b82f6] bg-black/30 flex items-center justify-center">
           <div className="bg-[#252525] border border-white/15 px-6 py-4 rounded-xl text-sm text-white shadow-2xl">
-            Drop new <code className="text-[#3b82f6]">.glb / .gltf</code> model,{' '}
-            <code className="text-[#3b82f6]">.png / .jpg</code> texture, or{' '}
+            Drop new <code className="text-[#3b82f6]">.glb / .usdz / .fbx / .obj / .stl / .ply / .dae / .3mf</code>{' '}
+            model, <code className="text-[#3b82f6]">.png / .jpg</code> texture, or{' '}
             <code className="text-[#3b82f6]">.hdr / .exr</code> HDRI
           </div>
         </div>
@@ -462,7 +478,7 @@ export default function App() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".gltf,.glb,.bin,.png,.jpg,.jpeg,.webp,.hdr,.exr"
+        accept=".gltf,.glb,.usdz,.usda,.fbx,.obj,.mtl,.stl,.ply,.dae,.3mf,.bin,.png,.jpg,.jpeg,.webp,.hdr,.exr"
         onChange={handleFileInputChange}
         className="hidden"
       />
@@ -516,7 +532,7 @@ export default function App() {
             </div>
           ) : (
             <span className="hidden sm:inline text-[#6e6e6e]">
-              KMod viewer · webgl · ground grid &amp; shadow · hdri · post-fx
+              KMod viewer · glb · usdz · fbx · obj · stl · ply · dae · 3mf · animations · post-fx
             </span>
           )}
         </div>
