@@ -1,0 +1,6 @@
+{
+  "name": "glTF 2.0 WebGL Studio Viewer",
+  "description": "Offline-capable 3D glTF and GLB model viewer built with Three.js and WebGL, featuring customizable ground contact shadows, local HDR/EXR environment lighting, material channel inspection, and standalone offline HTML export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
